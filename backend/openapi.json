@@ -78,6 +78,42 @@
         }
       }
     },
+    "/api/todos/summary": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Task counts; overdue tasks are not completed and due before today (UTC)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "total",
+                    "active",
+                    "completed",
+                    "overdue"
+                  ],
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "active": {
+                      "type": "integer"
+                    },
+                    "completed": {
+                      "type": "integer"
+                    },
+                    "overdue": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/todos/{id}": {
       "parameters": [
         {

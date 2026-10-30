@@ -34,7 +34,11 @@ export function selectTodos(
     .filter((todo) => {
       const statusMatches =
         filter === 'all' ||
-        (filter === 'completed' ? todo.completed : !todo.completed)
+        (filter === 'overdue'
+          ? isOverdue(todo)
+          : filter === 'completed'
+            ? todo.completed
+            : !todo.completed)
       return (
         statusMatches &&
         `${todo.title} ${todo.description}`
