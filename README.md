@@ -6,6 +6,8 @@
 cp .env.example .env
 ```
 
+Local development uses Node.js 22 (`.nvmrc`); with nvm, run `nvm use` in the repository root.
+
 ## Docker
 
 ```sh
