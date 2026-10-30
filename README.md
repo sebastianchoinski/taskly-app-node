@@ -134,3 +134,9 @@ Coverage — `backend/coverage/index.html`:
 ```sh
 npm run test:coverage
 ```
+
+## Skeptic
+
+Pull requests get a unit-test agent that writes tests and then tries to prove they do not catch anything. Tests that survive are opened as a separate pull request, never committed onto the author's branch.
+
+Details, how to run it, and what it has produced: [SOLUTION.md](SOLUTION.md).
