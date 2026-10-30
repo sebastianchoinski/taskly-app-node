@@ -42,7 +42,7 @@ async function publish(resultDir, env) {
   const api = github(env.GITHUB_TOKEN, env.GITHUB_REPOSITORY);
   const [owner] = env.GITHUB_REPOSITORY.split('/');
   const prNumber = env.PR_NUMBER || null;
-  const runLink = `[workflow run](${env.RUN_URL})`;
+  const runLink = env.RUN_URL ? `[workflow run](${env.RUN_URL})` : 'local run of the same scripts (GitHub Actions unavailable)';
   const reportFile = path.join(resultDir, 'report.json');
   const report = existsSync(reportFile)
     ? JSON.parse(readFileSync(reportFile, 'utf8'))
