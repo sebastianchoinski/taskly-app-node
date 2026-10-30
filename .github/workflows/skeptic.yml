@@ -1,0 +1,138 @@
+name: Skeptic
+
+# Pull requests: analyse the change, propose verified tests in a separate PR, report in a comment.
+# Manual run: write tests for existing code (coverage mode) and open a PR against the default branch.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: Comma-separated source files to cover
+        required: true
+        default: frontend/src/features/todos/utils/todos.ts,frontend/src/features/todos/components/TodoList.tsx,frontend/src/features/todos/components/DeleteTodoDialog.tsx,frontend/src/features/todos/TodosPage.tsx,frontend/src/features/todos/api/todos.ts
+
+permissions: {}
+
+concurrency:
+  group: skeptic-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  SKEPTIC_RUNTIME: ${{ vars.SKEPTIC_RUNTIME || 'gemini' }}
+  GEMINI_CLI_VERSION: 0.66.0
+  CLAUDE_CODE_VERSION: 2.1.308
+  SANDBOX_IMAGE: node:22.23.2-bookworm-slim
+
+jobs:
+  agent:
+    # Forks get no secrets; drafts, the agent's own PRs and opted-out PRs are skipped.
+    if: >-
+      github.event_name == 'workflow_dispatch' || (
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        !github.event.pull_request.draft &&
+        !startsWith(github.head_ref, 'skeptic/') &&
+        !contains(github.event.pull_request.labels.*.name, 'skip-test-agent'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Agent, skills and tools from the base branch (trusted)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Code under test
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: repo
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: trusted/.nvmrc
+      - name: Sandbox image and agent runtime
+        run: |
+          docker pull "$SANDBOX_IMAGE"
+          if [ "$SKEPTIC_RUNTIME" = claude ]; then
+            npm install --global --no-audit --no-fund "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION"
+          else
+            npm install --global --no-audit --no-fund "@google/gemini-cli@$GEMINI_CLI_VERSION"
+          fi
+      - name: Run Skeptic
+        working-directory: repo
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SKEPTIC_MODEL: ${{ vars.SKEPTIC_MODEL }}
+          SKEPTIC_MAX_BUDGET_USD: ${{ vars.SKEPTIC_MAX_BUDGET_USD }}
+          SKEPTIC_MAX_TURNS: ${{ vars.SKEPTIC_MAX_TURNS }}
+          SKEPTIC_IMAGE: ${{ env.SANDBOX_IMAGE }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TARGETS: ${{ inputs.targets }}
+        run: |
+          out="$RUNNER_TEMP/skeptic"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            node ../trusted/agent/run.mjs --mode coverage --head HEAD --targets "$TARGETS" --out "$out"
+          else
+            printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.txt"
+            node ../trusted/agent/run.mjs --base "$BASE_SHA" --head "$HEAD_SHA" \
+              --title "$PR_TITLE" --body-file "$RUNNER_TEMP/pr-body.txt" --out "$out"
+          fi
+      - name: Job summary
+        if: always()
+        run: cat "$RUNNER_TEMP/skeptic/comment.md" >> "$GITHUB_STEP_SUMMARY" || echo "No report was produced." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: skeptic-result
+          path: ${{ runner.temp }}/skeptic
+          retention-days: 14
+          if-no-files-found: ignore
+
+  publish:
+    # Holds the write token, so it never runs code from the pull request: it only applies a re-checked patch.
+    needs: agent
+    if: always() && (needs.agent.result == 'success' || needs.agent.result == 'failure')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Publisher from the base branch (trusted)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Branch to put the tests on
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: repo
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: trusted/.nvmrc
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: skeptic-result
+          path: ${{ runner.temp }}/skeptic
+      - name: Publish results
+        working-directory: repo
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node ../trusted/agent/publish.mjs "$RUNNER_TEMP/skeptic"
