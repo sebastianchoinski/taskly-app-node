@@ -1,0 +1,6 @@
+{
+  "name": "skeptic",
+  "version": "0.1.0",
+  "description": "A unit-test agent for Taskly that proves its tests catch real bugs before proposing them.",
+  "author": { "name": "Sebastian Choiński" }
+}
